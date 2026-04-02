@@ -147,6 +147,20 @@ class GitHubClient:
         """Return the full PR object."""
         return await self._get(f"pulls/{pr_number}")
 
+    async def list_prs_for_branch(
+        self, head_branch: str, state: str = "open"
+    ) -> list[dict]:
+        """List PRs whose head matches *head_branch*.
+
+        :param head_branch: Branch name (e.g. ``feature/foo``).
+            The API requires ``owner:branch`` format — this method
+            adds the owner prefix automatically.
+        :param state: PR state filter (``open``, ``closed``, ``all``).
+        :returns: List of PR dicts (may be empty).
+        """
+        head_param = f"{self._owner}:{head_branch}"
+        return await self._get("pulls", state=state, head=head_param)
+
     async def get_pr_files(self, pr_number: int) -> list[dict]:
         """Return the list of changed files in a PR."""
         return await self._get(f"pulls/{pr_number}/files")

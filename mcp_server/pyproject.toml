@@ -1,12 +1,15 @@
 [project]
 name = "pr-review-mcp-server"
-version = "0.1.0"
-description = "MCP server for GitHub PR review comment management"
+version = "0.2.0"
+description = "MCP server + CLI for GitHub PR review comment management"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.0.0",
     "httpx>=0.27.0",
 ]
+
+[project.scripts]
+pr-review = "cli:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]

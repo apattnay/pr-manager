@@ -28,6 +28,7 @@ from dataclasses import asdict
 from mcp.server.fastmcp import FastMCP
 
 from github_client import GitHubClient, ReviewComment, ReviewThread
+from evaluator import evaluate_threads  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,28 @@ mcp = FastMCP(
     "pr-review-mcp",
     instructions=(
         "GitHub PR Review MCP — fetch PR comments, reviews, threads; "
-        "reply to & resolve review conversations; get file diffs for fixing."
+        "reply to & resolve review conversations; get file diffs for fixing.\n"
+        "\n"
+        "IMPORTANT STARTUP FLOW:\n"
+        "1. When the user asks to review a PR, ALWAYS call `setup_review_session` first.\n"
+        "2. If the user provides a PR URL or number, pass it directly.\n"
+        "3. If the user does NOT provide a PR reference, call `setup_review_session` \n"
+        "   with an empty string — it will return a prompt with examples that you \n"
+        "   should show to the user.\n"
+        "4. Once the session is set up, use any other tool freely.\n"
+        "\n"
+        "Accepted PR reference formats:\n"
+        "  - Full URL:  https://github.com/owner/repo/pull/123\n"
+        "  - GHES URL:  https://github.intel.com/owner/repo/pull/123\n"
+        "  - PR number: 123 (needs GITHUB_OWNER/GITHUB_REPO env or git remote)\n"
+        "\n"
+        "If the token is not configured, call `setup_github_access` to show the \n"
+        "user how to authenticate."
     ),
 )
+
+# Session state — populated by setup_review_session or env vars
+_session: dict[str, str] = {}
 
 
 def _detect_remote() -> tuple[str, str]:
@@ -52,7 +72,6 @@ def _detect_remote() -> tuple[str, str]:
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-        # Handle HTTPS and SSH remotes
         m = re.search(r"[:/]([^/]+)/([^/]+?)(?:\.git)?$", url)
         if m:
             return m.group(1), m.group(2)
@@ -61,30 +80,143 @@ def _detect_remote() -> tuple[str, str]:
     return "", ""
 
 
-def _client() -> GitHubClient:
-    """Build a GitHubClient from env vars (+ optional git-remote fallback)."""
+def _detect_branch() -> str:
+    """Return the name of the current git branch, or ``""``."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
+
+
+def parse_pr_url(url_or_number: str) -> dict[str, str | int]:
+    """Parse a GitHub PR URL or plain number into components.
+
+    Accepts:
+      - ``https://github.com/owner/repo/pull/123``
+      - ``https://github.intel.com/owner/repo/pull/123``
+      - ``https://<any-ghes>/owner/repo/pull/123``
+      - ``123``  (plain PR number — needs owner/repo from env or git remote)
+
+    :param url_or_number: Full PR URL or just a PR number.
+    :returns: Dict with keys: owner, repo, pr_number, api_base, graphql_url.
+    :raises ValueError: If the input cannot be parsed.
+    """
+    url_or_number = url_or_number.strip()
+
+    # Try matching a full URL first
+    m = re.match(
+        r"https?://(?P<host>[^/]+)/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<pr>\d+)",
+        url_or_number,
+    )
+    if m:
+        host = m.group("host")
+        owner = m.group("owner")
+        repo = m.group("repo")
+        pr_number = int(m.group("pr"))
+
+        # Determine API endpoints from host
+        if host in ("github.com", "www.github.com"):
+            api_base = "https://api.github.com"
+            graphql_url = "https://api.github.com/graphql"
+        else:
+            # GitHub Enterprise Server
+            api_base = f"https://{host}/api/v3"
+            graphql_url = f"https://{host}/api/graphql"
+
+        return {
+            "owner": owner,
+            "repo": repo,
+            "pr_number": pr_number,
+            "api_base": api_base,
+            "graphql_url": graphql_url,
+        }
+
+    # Try plain number
+    if url_or_number.isdigit():
+        return {"pr_number": int(url_or_number)}
+
+    raise ValueError(
+        f"Cannot parse \'{url_or_number}\' as a PR URL or number. "
+        "Expected: https://github.com/owner/repo/pull/123  or just  123"
+    )
+
+
+def _resolve_token() -> str:
+    """Find the GitHub token from env, .netrc, or VS Code setting."""
     token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        return token
+
+    # Try .netrc
+    netrc_path = os.path.expanduser("~/.netrc")
+    if os.path.isfile(netrc_path):
+        try:
+            import netrc as netrc_mod
+
+            hosts_to_try = ["github.com", "api.github.com"]
+            # Add session host if available
+            if "api_base" in _session:
+                from urllib.parse import urlparse
+                parsed = urlparse(_session["api_base"])
+                if parsed.hostname:
+                    hosts_to_try.insert(0, parsed.hostname)
+
+            nrc = netrc_mod.netrc(netrc_path)
+            for host in hosts_to_try:
+                auth = nrc.authenticators(host)
+                if auth and auth[2]:
+                    return auth[2]
+        except Exception:
+            pass
+
+    return ""
+
+
+def _client() -> GitHubClient:
+    """Build a GitHubClient from session state, env vars, or git remote."""
+    token = _resolve_token()
     if not token:
         raise RuntimeError(
-            "GITHUB_TOKEN environment variable is required. "
-            "Set it to a GitHub PAT with 'repo' scope."
+            "No GitHub token found. Set it via one of:\n"
+            "  1. GITHUB_TOKEN environment variable\n"
+            "  2. ~/.netrc entry (machine github.com login <user> password <token>)\n"
+            "  3. VS Code setting: prReviewMcp.githubToken\n"
+            "\n"
+            "Call the setup_github_access tool for detailed instructions."
         )
+
+    # Session takes priority, then env, then git remote
     auto_owner, auto_repo = _detect_remote()
-    owner = os.environ.get("GITHUB_OWNER", auto_owner)
-    repo = os.environ.get("GITHUB_REPO", auto_repo)
+    owner = _session.get("owner") or os.environ.get("GITHUB_OWNER", auto_owner)
+    repo = _session.get("repo") or os.environ.get("GITHUB_REPO", auto_repo)
     if not owner or not repo:
         raise RuntimeError(
-            "Cannot determine repository. Set GITHUB_OWNER and GITHUB_REPO "
-            "environment variables, or run from inside a git checkout."
+            "Cannot determine repository. Either:\n"
+            "  - Call setup_review_session with a full PR URL, e.g.:\n"
+            "    https://github.com/owner/repo/pull/123\n"
+            "  - Set GITHUB_OWNER + GITHUB_REPO environment variables\n"
+            "  - Run from inside a git checkout"
         )
+
+    api_base = (
+        _session.get("api_base")
+        or os.environ.get("GITHUB_API_BASE", "https://api.github.com")
+    )
+    graphql_url = (
+        _session.get("graphql_url")
+        or os.environ.get("GITHUB_GRAPHQL_URL", "https://api.github.com/graphql")
+    )
+
     return GitHubClient(
         token=token,
         owner=owner,
         repo=repo,
-        api_base=os.environ.get("GITHUB_API_BASE", "https://api.github.com"),
-        graphql_url=os.environ.get(
-            "GITHUB_GRAPHQL_URL", "https://api.github.com/graphql"
-        ),
+        api_base=api_base,
+        graphql_url=graphql_url,
     )
 
 
@@ -110,6 +242,204 @@ def _thread_to_dict(t: ReviewThread) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 # MCP Tools
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+# ── 0a. Session initialisation ────────────────────────────────────────────
+@mcp.tool()
+async def setup_review_session(pr_url_or_number: str = "") -> str:
+    """Initialise the review session with a PR URL or number.
+
+    CALL THIS FIRST before using any other tool.  Accepts either:
+      - A full GitHub PR URL, e.g. ``https://github.com/owner/repo/pull/123``
+      - A GitHub Enterprise URL, e.g. ``https://github.intel.com/org/repo/pull/456``
+      - Just a PR number, e.g. ``123`` (requires GITHUB_OWNER/GITHUB_REPO env
+        or that the server runs inside a git checkout)
+      - Empty string or omitted — returns a prompt asking the user for the PR URL.
+
+    When a full URL is provided, the owner, repo, and correct API endpoints
+    are extracted automatically — no extra environment variables needed.
+
+    :param pr_url_or_number: Full PR URL or just the PR number (optional).
+    :returns: JSON confirming the session context, or a prompt asking for the PR.
+    """
+    # If no PR reference provided, try auto-detection first
+    if not pr_url_or_number or not pr_url_or_number.strip():
+        # Try to auto-detect: repo from git remote + PR from current branch
+        auto_owner, auto_repo = _detect_remote()
+        owner = os.environ.get("GITHUB_OWNER", auto_owner)
+        repo = os.environ.get("GITHUB_REPO", auto_repo)
+        branch = _detect_branch()
+        token = _resolve_token()
+
+        if owner and repo and branch and token and branch not in ("HEAD", "main", "master"):
+            # We have enough to try auto-detection
+            from urllib.parse import urlparse
+            api_base = _session.get("api_base") or os.environ.get(
+                "GITHUB_API_BASE", "https://api.github.com"
+            )
+            graphql_url = _session.get("graphql_url") or os.environ.get(
+                "GITHUB_GRAPHQL_URL", "https://api.github.com/graphql"
+            )
+            try:
+                gh = GitHubClient(
+                    token=token, owner=owner, repo=repo,
+                    api_base=api_base, graphql_url=graphql_url,
+                )
+                prs = await gh.list_prs_for_branch(branch, state="open")
+                if prs:
+                    pr = prs[0]
+                    _session["owner"] = owner
+                    _session["repo"] = repo
+                    _session["api_base"] = api_base
+                    _session["graphql_url"] = graphql_url
+                    return json.dumps({
+                        "status": "ok",
+                        "auto_detected": True,
+                        "pr_number": pr["number"],
+                        "title": pr["title"],
+                        "state": pr["state"],
+                        "author": pr["user"]["login"],
+                        "owner": owner,
+                        "repo": repo,
+                        "branch": branch,
+                        "api_base": api_base,
+                        "message": (
+                            f"Auto-detected PR #{pr['number']} from current "
+                            f"branch '{branch}' on {owner}/{repo}."
+                        ),
+                    }, indent=2)
+            except Exception:
+                pass  # Fall through to the prompt below
+
+        # Could not auto-detect — ask the user for input
+        return json.dumps({
+            "status": "needs_input",
+            "message": (
+                "Please provide a PR URL or number to get started.\n"
+                "\n"
+                "Examples:\n"
+                "  • https://github.com/owner/repo/pull/123\n"
+                "  • https://github.intel.com/org/repo/pull/456\n"
+                "  • 123  (if GITHUB_OWNER/GITHUB_REPO are set or you're in a git checkout)\n"
+                "\n"
+                "Paste the full PR URL from your browser for the easiest setup — "
+                "the repository, owner, and API endpoints will be detected automatically."
+            ),
+        }, indent=2)
+
+    parsed = parse_pr_url(pr_url_or_number)
+    pr_number = parsed["pr_number"]
+
+    # Store session-level overrides
+    for key in ("owner", "repo", "api_base", "graphql_url"):
+        if key in parsed:
+            _session[key] = str(parsed[key])
+
+    # Verify the token is available
+    token = _resolve_token()
+    if not token:
+        return json.dumps({
+            "status": "error",
+            "message": (
+                "Session context set, but no GitHub token found. "
+                "Call setup_github_access for instructions."
+            ),
+            "session": {**_session, "pr_number": pr_number},
+        }, indent=2)
+
+    # Verify connectivity by fetching the PR
+    try:
+        gh = _client()
+        pr = await gh.get_pr(pr_number)
+    except Exception as exc:
+        return json.dumps({
+            "status": "error",
+            "message": f"Token found but API call failed: {exc}",
+            "session": {**_session, "pr_number": pr_number},
+        }, indent=2)
+
+    return json.dumps({
+        "status": "ok",
+        "pr_number": pr_number,
+        "title": pr["title"],
+        "state": pr["state"],
+        "author": pr["user"]["login"],
+        "owner": _session.get("owner", ""),
+        "repo": _session.get("repo", ""),
+        "api_base": _session.get("api_base", ""),
+    }, indent=2)
+
+
+# ── 0b. Authentication guidance ──────────────────────────────────────────
+@mcp.tool()
+async def setup_github_access() -> str:
+    """Show how to configure GitHub authentication for this MCP server.
+
+    Returns step-by-step instructions for setting up a GitHub Personal
+    Access Token (PAT) so the PR review tools can access the GitHub API.
+
+    No parameters required — call this when the user asks how to set up
+    access or when a token-related error occurs.
+
+    :returns: Markdown-formatted setup guide.
+    """
+    # Check current state
+    token = _resolve_token()
+    has_token = bool(token)
+
+    guide_lines = [
+        "# GitHub Access Setup\n",
+    ]
+
+    if has_token:
+        guide_lines.append(
+            "\u2705 **Token found** — authentication is already configured.\n"
+        )
+    else:
+        guide_lines.append(
+            "\u26a0\ufe0f **No token detected** — follow one of the methods below.\n"
+        )
+
+    guide_lines.extend([
+        "## Method 1: Environment Variable (recommended for CLI)\n",
+        "```bash",
+        'export GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxx"',
+        "```\n",
+        "Add to your `~/.bashrc` or `~/.zshrc` so it persists across sessions.\n",
+        "",
+        "## Method 2: ~/.netrc File (recommended for automation)\n",
+        "Add an entry to `~/.netrc` (create the file if it doesn't exist):\n",
+        "```",
+        "# For github.com",
+        "machine github.com",
+        "  login your-username",
+        "  password ghp_xxxxxxxxxxxxxxxxxxxx",
+        "",
+        "# For GitHub Enterprise (e.g. github.intel.com)",
+        "machine github.intel.com",
+        "  login your-username",
+        "  password ghp_xxxxxxxxxxxxxxxxxxxx",
+        "```\n",
+        "Then secure the file: `chmod 600 ~/.netrc`\n",
+        "",
+        "## Method 3: VS Code Setting\n",
+        "Open VS Code Settings and set:\n",
+        "  **PR Review MCP \u2192 GitHub Token** (`prReviewMcp.githubToken`)\n",
+        "",
+        "## Creating a Token\n",
+        "1. Go to **GitHub \u2192 Settings \u2192 Developer Settings \u2192 Personal Access Tokens**",
+        "2. Click **Generate new token (classic)**",
+        "3. Select the **`repo`** scope (full control of private repositories)",
+        "4. Copy the token and store it using one of the methods above\n",
+        "",
+        "### GitHub Enterprise (GHES)\n",
+        "For `github.intel.com` or other GHES instances:",
+        "  - URL: `https://github.intel.com/settings/tokens`",
+        "  - The token works with both REST and GraphQL APIs",
+        "  - API base is auto-detected from the PR URL you provide\n",
+    ])
+
+    return "\n".join(guide_lines)
 
 
 # ── 1. PR overview ─────────────────────────────────────────────────────────
@@ -427,6 +757,29 @@ async def batch_reply_and_resolve(
     return json.dumps(results, indent=2)
 
 
+
+
+# ── 14. Evaluate review comments (triage) ─────────────────────────────────────
+@mcp.tool()
+async def evaluate_review_comments(pr_number: int) -> str:
+    """Evaluate all unresolved review threads and triage them.
+
+    Analyzes each unresolved thread using heuristic rules to determine
+    whether the reviewer's concern is valid, should be dismissed, or is
+    optional. This helps prioritise which review comments actually need
+    code changes vs. which can be resolved with a reply.
+
+    Verdicts:
+      - VALID   — Real issue, should fix the code.
+      - DISMISS — Bot was wrong or concern does not apply.
+      - OPTIONAL — Nice-to-have suggestion, not a bug.
+
+    :param pr_number: The pull request number.
+    :returns: JSON array of evaluation objects with verdicts and reasoning.
+    """
+    gh = _client()
+    evaluations = await evaluate_threads(gh, pr_number)
+    return json.dumps([e.to_dict() for e in evaluations], indent=2)
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
