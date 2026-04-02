@@ -1,0 +1,84 @@
+{
+  "name": "pr-review-mcp",
+  "displayName": "PR Review MCP",
+  "description": "MCP server for GitHub PR review management \u2014 fetch, fix, reply to, and resolve review comments from Copilot Chat.",
+  "version": "0.1.0",
+  "publisher": "apattnay",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Other",
+    "Chat"
+  ],
+  "keywords": [
+    "github",
+    "pull-request",
+    "review",
+    "mcp",
+    "copilot"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "PR Review MCP",
+      "properties": {
+        "prReviewMcp.githubToken": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "GitHub Personal Access Token (PAT) with `repo` scope. If empty, falls back to `GITHUB_TOKEN` env var.",
+          "order": 1
+        },
+        "prReviewMcp.githubApiBase": {
+          "type": "string",
+          "default": "https://github.intel.com/api/v3",
+          "markdownDescription": "Base URL for the GitHub REST API. Change for GitHub.com (`https://api.github.com`) or other GHES instances.",
+          "order": 2
+        },
+        "prReviewMcp.githubGraphqlUrl": {
+          "type": "string",
+          "default": "https://github.intel.com/api/graphql",
+          "markdownDescription": "URL for the GitHub GraphQL API.",
+          "order": 3
+        },
+        "prReviewMcp.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "markdownDescription": "Path to the Python 3.11+ interpreter that has `mcp` and `httpx` installed.",
+          "order": 4
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "prReviewMcp.restartServer",
+        "title": "PR Review MCP: Restart Server"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src/",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.99.0",
+    "@vscode/vsce": "2.19.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {},
+  "overrides": {
+    "undici": "5.28.4"
+  }
+}

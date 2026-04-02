@@ -1,0 +1,7 @@
+node_modules/
+out/
+*.vsix
+.vscode-test/
+mcp_server/__pycache__/
+mcp_server/*.pyc
+.DS_Store
