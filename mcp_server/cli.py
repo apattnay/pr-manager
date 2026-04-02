@@ -415,6 +415,16 @@ async def cmd_unresolved(args: argparse.Namespace) -> None:
         _json_print(rows)
     else:
         _table_print(rows, ["file", "reviewer", "comment"])
+        print()
+        print("To reply & resolve a thread:")
+        for i, row in enumerate(rows, 1):
+            cid = row["comment_id"]
+            tid = row["thread_id"]
+            print(f'  [{i}] pr-review dismiss {i}  '
+                  f'--body "Not applicable — <reason>"')
+        print()
+        print("Or resolve all dismissable threads at once:")
+        print("  pr-review batch-resolve --evaluate")
 
 
 async def cmd_evaluate(args: argparse.Namespace) -> None:
@@ -510,6 +520,41 @@ async def cmd_reply(args: argparse.Namespace) -> None:
     if args.resolve and args.thread_id:
         ok = await gh.resolve_thread(args.thread_id)
         print(f"Thread {'resolved' if ok else 'FAILED to resolve'}: {args.thread_id}")
+
+
+async def cmd_dismiss(args: argparse.Namespace) -> None:
+    """Reply to a thread by index number and resolve it.
+
+    The index comes from the ``unresolved`` or ``evaluate`` output,
+    so you never need to copy-paste raw thread/comment IDs.
+    """
+    pr_number = await resolve_pr_number(args)
+    gh = make_client()
+    threads = await gh.list_review_threads(pr_number)
+    unresolved = [t for t in threads if not t.is_resolved]
+
+    if not unresolved:
+        print("No unresolved threads.")
+        return
+
+    idx = args.thread_index
+    if idx < 1 or idx > len(unresolved):
+        print(f"ERROR: Thread index {idx} out of range (1–{len(unresolved)}).",
+              file=sys.stderr)
+        print("Run 'pr-review unresolved' to see the numbered list.", file=sys.stderr)
+        sys.exit(1)
+
+    t = unresolved[idx - 1]
+    first = t.comments[0] if t.comments else None
+    cid = first.id if first else None
+    body = args.body
+
+    print(f"Thread [{idx}] {t.path}:{t.line or '?'}")
+    if cid:
+        reply = await gh.reply_to_review_comment(pr_number, cid, body)
+        print(f"  Replied: {reply.html_url}")
+    ok = await gh.resolve_thread(t.thread_id)
+    print(f"  {'Resolved' if ok else 'FAILED to resolve'}: {t.thread_id}")
 
 
 async def cmd_batch_resolve(args: argparse.Namespace) -> None:
@@ -654,6 +699,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_pr_ref(p)
     p.add_argument("file_path", help="Path of file in the PR")
 
+    # dismiss (reply + resolve by thread index)
+    p = sub.add_parser("dismiss", help="Reply & resolve a thread by index number")
+    _add_pr_ref(p)
+    p.add_argument("thread_index", type=int,
+                   help="Thread number from 'unresolved' or 'evaluate' output (1-based)")
+    p.add_argument("--body", type=str,
+                   default="Not applicable — reviewed and dismissed.",
+                   help="Reply message (default: standard dismiss)")
+
     # reply
     p = sub.add_parser("reply", help="Reply to a review comment")
     _add_pr_ref(p)
@@ -685,6 +739,7 @@ COMMANDS = {
     "evaluate": cmd_evaluate,
     "fix-plan": cmd_fix_plan,
     "diff": cmd_diff,
+    "dismiss": cmd_dismiss,
     "reply": cmd_reply,
     "batch-resolve": cmd_batch_resolve,
 }
