@@ -2,6 +2,19 @@
 
 All notable changes to the **PR Review MCP** extension will be documented here.
 
+## [1.1.2] - 2026-04-03
+
+### Fixed
+- **Windows path quoting**: Added `q()` helper that wraps paths containing
+  spaces in double quotes. Fixes `'C:\Program' is not recognized` error
+  when Python is installed in `C:\Program Files\Python313\`.
+  Applied to all `execProbe()` and `execLong()` calls: `probePython()`,
+  `hasDeps()`, `hasPip()`, `createMcpVenv()`, and terminal commands.
+- **Configured path re-probing**: The saved `pythonPath` setting from v1.1.1
+  (e.g. `C:\Program Files\Python313\python.exe`) is now properly
+  quoted when re-probed on next activation, eliminating the spurious WARN.
+- **Python 3.14 candidate**: Added Python 3.14 to Windows candidate list.
+
 ## [1.1.1] - 2026-04-03
 
 ### Fixed

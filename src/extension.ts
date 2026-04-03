@@ -1,5 +1,5 @@
 /**
- * PR Review MCP — VS Code Extension (v1.1.1)
+ * PR Review MCP — VS Code Extension (v1.1.2)
  *
  * Registers the bundled Python MCP server via the standard
  * `vscode.lm.registerMcpServerDefinitionProvider` API so that
@@ -39,6 +39,18 @@ function cfg<T>(key: string): T {
 /** Absolute path to the bundled server.py inside the installed extension. */
 function serverScript(context: vscode.ExtensionContext): string {
   return path.join(context.extensionPath, "mcp_server", "server.py");
+}
+
+/**
+ * Wrap a filesystem path in double-quotes if it contains spaces or
+ * other shell-unsafe characters. Essential on Windows where paths like
+ * `C:\Program Files\Python313\python.exe` break without quoting.
+ */
+function q(p: string): string {
+  if (/[\s()&^]/.test(p) && !p.startsWith('"')) {
+    return `"${p}"`;
+  }
+  return p;
 }
 
 function parseHostFromApiBase(apiBase: string): string {
@@ -166,11 +178,13 @@ function isVenvPath(pythonPath: string): boolean {
 
 /**
  * Probe a single candidate to see if it is a usable Python >= 3.11.
+ * All paths are quoted via q() for Windows "Program Files" safety.
  * Returns PythonInfo or null.
  */
 async function probePython(candidate: string): Promise<PythonInfo | null> {
+  const qCandidate = q(candidate);
   const versionStr = await execProbe(
-    `${candidate} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`,
+    `${qCandidate} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`,
   );
   if (!versionStr) {
     return null;
@@ -191,7 +205,7 @@ async function probePython(candidate: string): Promise<PythonInfo | null> {
     return null;
   }
   const realPath = await execProbe(
-    `${candidate} -c "import sys; print(sys.executable)"`,
+    `${qCandidate} -c "import sys; print(sys.executable)"`,
   );
   const resolved = realPath || candidate;
   return {
@@ -217,18 +231,17 @@ function pythonCandidates(): string[] {
     candidates.push("python3", "python");
     const localAppData = process.env.LOCALAPPDATA || "";
     const programFiles = process.env.ProgramFiles || "C:\\Program Files";
-    for (const ver of ["313", "312", "311"]) {
+    for (const ver of ["314", "313", "312", "311"]) {
       if (localAppData) {
         candidates.push(
-          `"${localAppData}\\Programs\\Python\\Python${ver}\\python.exe"`,
+          path.join(localAppData, "Programs", "Python", `Python${ver}`, "python.exe"),
         );
       }
       candidates.push(
-        `"${programFiles}\\Python${ver}\\python.exe"`,
+        path.join(programFiles, `Python${ver}`, "python.exe"),
       );
     }
   } else {
-    // Linux / macOS — prefer versioned names, then common absolute paths
     candidates.push(
       "python3.13",
       "python3.12",
@@ -282,7 +295,7 @@ async function discoverPython(): Promise<PythonInfo | null> {
     }
     if (info.isVenv) {
       outputChannel.appendLine(
-        `SKIP  ${candidate} -> ${info.path} (${info.version}) [project venv — skipped]`,
+        `SKIP  ${candidate} -> ${info.path} (${info.version}) [project venv]`,
       );
       venvHits.push(info);
     } else {
@@ -314,7 +327,6 @@ async function discoverPython(): Promise<PythonInfo | null> {
  * Path to the extension's own isolated venv.
  */
 function mcpVenvDir(context: vscode.ExtensionContext): string {
-  // Use globalStorageUri so it survives extension updates
   return path.join(context.globalStorageUri.fsPath, "mcp-venv");
 }
 
@@ -334,7 +346,7 @@ function mcpVenvPython(context: vscode.ExtensionContext): string {
  */
 async function hasDeps(pythonPath: string): Promise<boolean> {
   const result = await execProbe(
-    `${pythonPath} -c "import mcp; import httpx; print('ok')"`,
+    `${q(pythonPath)} -c "import mcp; import httpx; print('ok')"`,
   );
   return result === "ok";
 }
@@ -343,7 +355,7 @@ async function hasDeps(pythonPath: string): Promise<boolean> {
  * Check if pip is available for a Python.
  */
 async function hasPip(pythonPath: string): Promise<boolean> {
-  const result = await execProbe(`${pythonPath} -m pip --version`);
+  const result = await execProbe(`${q(pythonPath)} -m pip --version`);
   return result.startsWith("pip ");
 }
 
@@ -357,6 +369,7 @@ async function hasUv(): Promise<boolean> {
 
 /**
  * Create a dedicated venv and install deps into it.
+ * All paths quoted with q() for Windows safety.
  * Returns the venv Python path on success, or "" on failure.
  */
 async function createMcpVenv(
@@ -372,17 +385,17 @@ async function createMcpVenv(
     fs.mkdirSync(parentDir, { recursive: true });
   }
 
-  // Try creating venv with uv first (faster, always includes pip-compatible installer)
+  // Try creating venv with uv first (faster)
   const uvAvailable = await hasUv();
   if (uvAvailable) {
-    outputChannel.appendLine(`Creating venv with uv: uv venv --python ${basePython} "${venvDir}"`);
-    const uvResult = await execLong(`uv venv --python ${basePython} "${venvDir}"`);
+    const uvCmd = `uv venv --python ${q(basePython)} ${q(venvDir)}`;
+    outputChannel.appendLine(`Creating venv with uv: ${uvCmd}`);
+    const uvResult = await execLong(uvCmd);
     if (uvResult.ok && fs.existsSync(venvPy)) {
       outputChannel.appendLine("OK  venv created with uv.");
-      // Install deps with uv pip
       outputChannel.appendLine("Installing dependencies with uv pip...");
       const installResult = await execLong(
-        `uv pip install --python "${venvPy}" "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
+        `uv pip install --python ${q(venvPy)} "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
       );
       if (installResult.stdout) { outputChannel.appendLine(installResult.stdout); }
       if (installResult.stderr) { outputChannel.appendLine(installResult.stderr); }
@@ -398,8 +411,9 @@ async function createMcpVenv(
   }
 
   // Fallback: create venv with stdlib venv module
-  outputChannel.appendLine(`Creating venv: ${basePython} -m venv "${venvDir}"`);
-  const venvResult = await execLong(`${basePython} -m venv "${venvDir}"`);
+  const venvCmd = `${q(basePython)} -m venv ${q(venvDir)}`;
+  outputChannel.appendLine(`Creating venv: ${venvCmd}`);
+  const venvResult = await execLong(venvCmd);
   if (!venvResult.ok || !fs.existsSync(venvPy)) {
     if (venvResult.stderr) { outputChannel.appendLine(venvResult.stderr); }
     outputChannel.appendLine("FAIL  Could not create venv.");
@@ -412,7 +426,7 @@ async function createMcpVenv(
   if (pipAvail) {
     outputChannel.appendLine("Installing dependencies with pip...");
     const pipResult = await execLong(
-      `"${venvPy}" -m pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
+      `${q(venvPy)} -m pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
     );
     if (pipResult.stdout) { outputChannel.appendLine(pipResult.stdout); }
     if (pipResult.stderr) { outputChannel.appendLine(pipResult.stderr); }
@@ -427,7 +441,7 @@ async function createMcpVenv(
   if (uvAvailable) {
     outputChannel.appendLine("Trying uv pip install into stdlib venv...");
     const uvPipResult = await execLong(
-      `uv pip install --python "${venvPy}" "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
+      `uv pip install --python ${q(venvPy)} "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
     );
     if (uvPipResult.stdout) { outputChannel.appendLine(uvPipResult.stdout); }
     if (uvPipResult.stderr) { outputChannel.appendLine(uvPipResult.stderr); }
@@ -566,9 +580,9 @@ async function autoSetup(
     const venvDir = mcpVenvDir(context);
     const isWindows = process.platform === "win32";
     const activateCmd = isWindows
-      ? `"${venvDir}\\Scripts\\activate"`
-      : `source "${venvDir}/bin/activate"`;
-    terminal.sendText(`${python.path} -m venv "${venvDir}"`);
+      ? `${q(path.join(venvDir, "Scripts", "activate"))}`
+      : `source ${q(path.join(venvDir, "bin", "activate"))}`;
+    terminal.sendText(`${q(python.path)} -m venv ${q(venvDir)}`);
     terminal.sendText(activateCmd);
     terminal.sendText(`pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"`);
     vscode.window.showInformationMessage(
@@ -599,7 +613,7 @@ function createMcpProvider(
         pythonPath,
         [script],
         buildServerEnv(),
-        "1.1.1",
+        "1.1.2",
       );
       server.cwd = vscode.Uri.file(path.dirname(script));
 
@@ -668,7 +682,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   showSetupHints();
 
-  outputChannel.appendLine("PR Review MCP extension activated (v1.1.1).");
+  outputChannel.appendLine("PR Review MCP extension activated (v1.1.2).");
   outputChannel.appendLine(`Server script: ${serverScript(context)}`);
 }
 
