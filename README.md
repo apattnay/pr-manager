@@ -73,7 +73,7 @@ Zero configuration needed for the common case.
 Search for **"PR Review MCP"** in the Extensions panel, or run:
 
 ```bash
-code --install-extension apattnay.pr-review-mcp
+code --install-extension aurodeeptapattnayak.pr-review-mcp
 ```
 
 ### From .vsix file
