@@ -100,47 +100,60 @@ class GitHubClient:
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        self._http: httpx.AsyncClient | None = None
+
+    async def _ensure_http(self) -> httpx.AsyncClient:
+        """Return (and lazily create) a shared async HTTP client."""
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(headers=self._headers, timeout=30)
+        return self._http
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client (optional cleanup)."""
+        if self._http and not self._http.is_closed:
+            await self._http.aclose()
+            self._http = None
 
     # -- helpers -------------------------------------------------------------
     def _url(self, path: str) -> str:
         return f"{self._api_base}/repos/{self._owner}/{self._repo}/{path}"
 
     async def _get(self, path: str, **params: Any) -> Any:
-        async with httpx.AsyncClient(headers=self._headers, timeout=30) as c:
-            resp = await c.get(self._url(path), params=params)
-            resp.raise_for_status()
-            return resp.json()
+        c = await self._ensure_http()
+        resp = await c.get(self._url(path), params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     async def _post(self, path: str, payload: dict) -> Any:
-        async with httpx.AsyncClient(headers=self._headers, timeout=30) as c:
-            resp = await c.post(self._url(path), json=payload)
-            resp.raise_for_status()
-            return resp.json()
+        c = await self._ensure_http()
+        resp = await c.post(self._url(path), json=payload)
+        resp.raise_for_status()
+        return resp.json()
 
     async def _patch(self, path: str, payload: dict) -> Any:
-        async with httpx.AsyncClient(headers=self._headers, timeout=30) as c:
-            resp = await c.patch(self._url(path), json=payload)
-            resp.raise_for_status()
-            return resp.json()
+        c = await self._ensure_http()
+        resp = await c.patch(self._url(path), json=payload)
+        resp.raise_for_status()
+        return resp.json()
 
     async def _delete(self, path: str) -> None:
-        async with httpx.AsyncClient(headers=self._headers, timeout=30) as c:
-            resp = await c.delete(self._url(path))
-            resp.raise_for_status()
+        c = await self._ensure_http()
+        resp = await c.delete(self._url(path))
+        resp.raise_for_status()
 
     async def _graphql(self, query: str, variables: dict | None = None) -> Any:
         payload: dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
-        async with httpx.AsyncClient(headers=self._headers, timeout=30) as c:
-            resp = await c.post(self._graphql_url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            if "errors" in data:
-                raise RuntimeError(
-                    f"GraphQL errors: {json.dumps(data['errors'], indent=2)}"
-                )
-            return data["data"]
+        c = await self._ensure_http()
+        resp = await c.post(self._graphql_url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        if "errors" in data:
+            raise RuntimeError(
+                f"GraphQL errors: {json.dumps(data['errors'], indent=2)}"
+            )
+        return data["data"]
 
     # ── PR metadata ─────────────────────────────────────────────────────────
     async def get_pr(self, pr_number: int) -> dict:
@@ -162,25 +175,48 @@ class GitHubClient:
         return await self._get("pulls", state=state, head=head_param)
 
     async def get_pr_files(self, pr_number: int) -> list[dict]:
-        """Return the list of changed files in a PR."""
-        return await self._get(f"pulls/{pr_number}/files")
+        """Return the list of changed files in a PR (paginated)."""
+        page = 1
+        all_files: list[dict] = []
+        while True:
+            raw = await self._get(
+                f"pulls/{pr_number}/files", per_page=100, page=page
+            )
+            if not raw:
+                break
+            all_files.extend(raw)
+            if len(raw) < 100:
+                break
+            page += 1
+        return all_files
 
     # ── Reviews ─────────────────────────────────────────────────────────────
     async def list_reviews(self, pr_number: int) -> list[Review]:
-        """List all reviews on a PR."""
-        raw = await self._get(f"pulls/{pr_number}/reviews")
-        return [
-            Review(
-                id=r["id"],
-                node_id=r["node_id"],
-                user=r["user"]["login"],
-                state=r["state"],
-                body=r.get("body", ""),
-                submitted_at=r.get("submitted_at", ""),
-                html_url=r.get("html_url", ""),
+        """List all reviews on a PR (paginated)."""
+        page = 1
+        reviews: list[Review] = []
+        while True:
+            raw = await self._get(
+                f"pulls/{pr_number}/reviews", per_page=100, page=page
             )
-            for r in raw
-        ]
+            if not raw:
+                break
+            for r in raw:
+                reviews.append(
+                    Review(
+                        id=r["id"],
+                        node_id=r["node_id"],
+                        user=r["user"]["login"],
+                        state=r["state"],
+                        body=r.get("body", ""),
+                        submitted_at=r.get("submitted_at", ""),
+                        html_url=r.get("html_url", ""),
+                    )
+                )
+            if len(raw) < 100:
+                break
+            page += 1
+        return reviews
 
     # ── Review comments (REST) ──────────────────────────────────────────────
     async def list_review_comments(self, pr_number: int) -> list[ReviewComment]:

@@ -11,6 +11,12 @@ dependencies = [
 [project.scripts]
 pr-review = "cli:main"
 
+[tool.setuptools]
+# Flat layout — all .py files sit directly in the package root.
+# Tell setuptools to treat this directory as a collection of top-level
+# modules (not a single package named "mcp_server").
+py-modules = ["cli", "server", "evaluator", "github_client"]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.backends._legacy:_Backend"
