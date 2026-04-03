@@ -1,30 +1,14 @@
 {
-	"servers": {
-		"pr-review-mcp": {
-			"type": "stdio",
-			"command": "python3",
-			"args": [
-				"${workspaceFolder}/mcp_server/server.py"
-			],
-			"env": {
-				"GITHUB_TOKEN": "${config:prReviewMcp.githubToken}",
-				"GITHUB_API_BASE": "${config:prReviewMcp.githubApiBase}",
-				"GITHUB_GRAPHQL_URL": "${config:prReviewMcp.githubGraphqlUrl}"
-			}
-		},
-		"com.microsoft/azure": {
-			"type": "stdio",
-			"command": "dnx",
-			"args": [
-				"Azure.Mcp@3.0.0-beta.1",
-				"--yes",
-				"--",
-				"server",
-				"start"
-			],
-			"gallery": "https://api.mcp.github.com",
-			"version": "3.0.0-beta.1"
-		}
-	},
-	"inputs": []
+  "servers": {
+    "pr-review-mcp": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["${workspaceFolder}/mcp_server/server.py"],
+      "env": {
+        "GITHUB_TOKEN": "${config:prReviewMcp.githubToken}",
+        "GITHUB_API_BASE": "${config:prReviewMcp.githubApiBase}",
+        "GITHUB_GRAPHQL_URL": "${config:prReviewMcp.githubGraphqlUrl}"
+      }
+    }
+  }
 }

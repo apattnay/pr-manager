@@ -1,20 +1,40 @@
 [project]
 name = "pr-review-mcp-server"
-version = "0.3.0"
+version = "1.0.0"
 description = "MCP server + CLI for GitHub PR review comment management"
+readme = "../README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
+authors = [
+    {name = "Ashwin Pattnayak"},
+]
+keywords = ["github", "pull-request", "review", "mcp", "copilot", "code-review"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+]
 dependencies = [
     "mcp[cli]>=1.0.0",
     "httpx>=0.27.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/AshwinPattnayak/pr-review-mcp"
+Repository = "https://github.com/AshwinPattnayak/pr-review-mcp"
+Changelog = "https://github.com/AshwinPattnayak/pr-review-mcp/blob/main/CHANGELOG.md"
+Issues = "https://github.com/AshwinPattnayak/pr-review-mcp/issues"
+
 [project.scripts]
 pr-review = "cli:main"
 
 [tool.setuptools]
-# Flat layout — all .py files sit directly in the package root.
-# Tell setuptools to treat this directory as a collection of top-level
-# modules (not a single package named "mcp_server").
 py-modules = ["cli", "server", "evaluator", "github_client"]
 
 [build-system]

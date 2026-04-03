@@ -12,9 +12,25 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import asyncio
+
+import asyncio
+
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# ── Retry / rate-limit configuration ──────────────────────────────────────
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 1.0  # seconds — exponential: 1s, 2s, 4s
+RATE_LIMIT_PAUSE = 60     # seconds to wait when rate-limited
+
+# ── Retry / rate-limit configuration ──────────────────────────────────────
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 1.0  # seconds — exponential: 1s, 2s, 4s
+RATE_LIMIT_PAUSE = 60     # seconds to wait when rate-limited
 
 _GITHUB_API = "https://api.github.com"
 _GITHUB_GRAPHQL = "https://api.github.com/graphql"
@@ -119,36 +135,117 @@ class GitHubClient:
         return f"{self._api_base}/repos/{self._owner}/{self._repo}/{path}"
 
     async def _get(self, path: str, **params: Any) -> Any:
+        return await self._request("GET", path, params=params)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        payload: dict | None = None,
+        raw_url: str | None = None,
+    ) -> Any:
+        """Issue an HTTP request with retry + rate-limit handling.
+
+        Retries up to ``MAX_RETRIES`` times with exponential back-off
+        for transient failures (5xx, network errors).  When the API
+        returns **403** with ``X-RateLimit-Remaining: 0``, waits until
+        the ``X-RateLimit-Reset`` timestamp before retrying.
+
+        :param method: HTTP verb (GET, POST, PATCH, DELETE).
+        :param path: Repo-relative API path (e.g. ``pulls/42``).
+        :param params: Query-string parameters (GET only).
+        :param payload: JSON body (POST/PATCH).
+        :param raw_url: Bypass ``_url()`` and use this URL directly.
+        :returns: Parsed JSON response body.
+        :raises httpx.HTTPStatusError: After all retries are exhausted.
+        """
         c = await self._ensure_http()
-        resp = await c.get(self._url(path), params=params)
-        resp.raise_for_status()
-        return resp.json()
+        url = raw_url or self._url(path)
+        last_exc: Exception | None = None
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                if method == "GET":
+                    resp = await c.get(url, params=params)
+                elif method == "POST":
+                    resp = await c.post(url, json=payload)
+                elif method == "PATCH":
+                    resp = await c.patch(url, json=payload)
+                elif method == "DELETE":
+                    resp = await c.delete(url)
+                    resp.raise_for_status()
+                    return None  # DELETE has no body
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+
+                # ── Rate-limit detection ────────────────────────
+                if resp.status_code == 403:
+                    remaining = resp.headers.get("X-RateLimit-Remaining", "")
+                    if remaining == "0":
+                        reset_at = int(resp.headers.get("X-RateLimit-Reset", "0"))
+                        import time
+                        wait = max(reset_at - int(time.time()), 1)
+                        wait = min(wait, RATE_LIMIT_PAUSE)
+                        logger.warning(
+                            "Rate-limited by GitHub API — waiting %ds (attempt %d/%d)",
+                            wait, attempt, MAX_RETRIES,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+
+                # ── Retry on server errors ──────────────────────
+                if resp.status_code >= 500:
+                    backoff = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Server error %d — retrying in %.1fs (attempt %d/%d)",
+                        resp.status_code, backoff, attempt, MAX_RETRIES,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+
+                resp.raise_for_status()
+                return resp.json()
+
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                backoff = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                logger.warning(
+                    "Timeout — retrying in %.1fs (attempt %d/%d)",
+                    backoff, attempt, MAX_RETRIES,
+                )
+                await asyncio.sleep(backoff)
+            except httpx.HTTPStatusError:
+                raise  # 4xx (non-rate-limit) — don't retry
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                backoff = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                logger.warning(
+                    "Network error: %s — retrying in %.1fs (attempt %d/%d)",
+                    exc, backoff, attempt, MAX_RETRIES,
+                )
+                await asyncio.sleep(backoff)
+
+        # All retries exhausted
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(f"Request failed after {MAX_RETRIES} retries: {method} {url}")
 
     async def _post(self, path: str, payload: dict) -> Any:
-        c = await self._ensure_http()
-        resp = await c.post(self._url(path), json=payload)
-        resp.raise_for_status()
-        return resp.json()
+        return await self._request("POST", path, payload=payload)
 
     async def _patch(self, path: str, payload: dict) -> Any:
-        c = await self._ensure_http()
-        resp = await c.patch(self._url(path), json=payload)
-        resp.raise_for_status()
-        return resp.json()
+        return await self._request("PATCH", path, payload=payload)
 
     async def _delete(self, path: str) -> None:
-        c = await self._ensure_http()
-        resp = await c.delete(self._url(path))
-        resp.raise_for_status()
+        await self._request("DELETE", path)
 
     async def _graphql(self, query: str, variables: dict | None = None) -> Any:
         payload: dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
-        c = await self._ensure_http()
-        resp = await c.post(self._graphql_url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+        data = await self._request("POST", "", payload=payload, raw_url=self._graphql_url)
         if "errors" in data:
             raise RuntimeError(
                 f"GraphQL errors: {json.dumps(data['errors'], indent=2)}"

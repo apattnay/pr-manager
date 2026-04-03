@@ -4,4 +4,14 @@ out/
 .vscode-test/
 mcp_server/__pycache__/
 mcp_server/*.pyc
+tests/__pycache__/
+*.egg-info/
+dist/
+build/
 .DS_Store
+.vscode/settings.json
+.env
+*.log
+.pytest_cache/
+htmlcov/
+.coverage

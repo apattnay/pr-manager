@@ -1,98 +1,96 @@
 # PR Review MCP
 
-A **VS Code extension** + **MCP server** + **CLI** for managing GitHub Pull
-Request review comments directly from Copilot Chat or the terminal.
+[![CI](https://github.com/AshwinPattnayak/pr-review-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AshwinPattnayak/pr-review-mcp/actions)
+[![VS Code](https://img.shields.io/badge/VS%20Code-1.99%2B-blue?logo=visualstudiocode)](https://code.visualstudio.com/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Fetch unresolved review threads → triage with the evaluator → fix the code
-→ reply & resolve — all without leaving the editor.
+**Manage GitHub Pull Request reviews from Copilot Chat — fetch, triage, fix, reply, and resolve review comments without leaving the editor.**
+
+PR Review MCP is a **VS Code extension** that bundles an **MCP server** (Model Context Protocol) and a **CLI tool**, giving you three ways to manage PR reviews:
+
+| Interface | Best for |
+|-----------|----------|
+| **Copilot Chat** (Agent mode) | Conversational review workflow |
+| **CLI** (`pr-review`) | Scripting and terminal-first developers |
+| **MCP tools** | Any MCP-compatible client (Copilot, Claude Desktop, etc.) |
 
 ## Features
 
-### 16 MCP Tools (for Copilot Chat Agent mode)
+### 16 MCP Tools
 
-| # | Tool | Description |
-|---|------|-------------|
-| 0a | `setup_review_session` | Initialise session — auto-detects repo + PR from git |
-| 0b | `setup_github_access` | Show authentication setup instructions |
-| 1 | `get_pr_overview` | High-level PR summary (title, state, files, reviews) |
-| 2 | `list_review_comments` | All review comments grouped by file |
-| 3 | `list_review_threads` | All threads (resolved + unresolved) via GraphQL |
-| 4 | `get_unresolved_comments_summary` | Actionable summary of open review items |
-| 5 | `get_file_diff` | Patch/diff for a specific file in the PR |
-| 6 | `reply_to_comment` | Reply to a review comment |
-| 7 | `update_comment` | Edit an existing review comment body |
-| 8 | `resolve_thread` | Mark a thread as resolved |
-| 9 | `unresolve_thread` | Re-open a resolved thread |
-| 10 | `resolve_all_threads` | Bulk-resolve every unresolved thread |
-| 11 | `post_pr_comment` | Post a top-level PR comment |
-| 12 | `generate_fix_plan` | Structured fix plan from unresolved feedback |
-| 13 | `batch_reply_and_resolve` | Reply + resolve multiple threads in one call |
-| 14 | `evaluate_review_comments` | Triage threads: VALID / DISMISS / OPTIONAL |
+| Tool | What it does |
+|------|-------------|
+| `setup_review_session` | Initialize session — auto-detects repo + PR from git |
+| `setup_github_access` | Show authentication setup instructions |
+| `get_pr_overview` | High-level PR summary (title, state, files, reviews) |
+| `list_review_comments` | All review comments grouped by file |
+| `list_review_threads` | All threads (resolved + unresolved) via GraphQL |
+| `get_unresolved_comments_summary` | Actionable summary of open review items |
+| `get_file_diff` | Patch/diff for a specific file in the PR |
+| `reply_to_comment` | Reply to a review comment |
+| `update_comment` | Edit an existing review comment body |
+| `resolve_thread` | Mark a thread as resolved |
+| `unresolve_thread` | Re-open a resolved thread |
+| `resolve_all_threads` | Bulk-resolve every unresolved thread |
+| `post_pr_comment` | Post a top-level PR comment |
+| `generate_fix_plan` | Structured fix plan from unresolved feedback |
+| `batch_reply_and_resolve` | Reply + resolve multiple threads in one call |
+| `evaluate_review_comments` | Triage threads: VALID / DISMISS / OPTIONAL |
 
-### CLI (9 subcommands)
+### Smart Triage Engine
 
-```bash
-pr-review overview          # PR summary
-pr-review comments          # all review comments
-pr-review unresolved        # unresolved threads (numbered for dismiss)
-pr-review evaluate          # triage with heuristic evaluator
-pr-review fix-plan          # structured fix plan
-pr-review diff <file>       # file diff from PR
-pr-review dismiss N         # reply & resolve thread N by index
-pr-review reply             # reply to a comment by ID
-pr-review batch-resolve     # bulk reply & resolve (--evaluate for smart mode)
-```
+The built-in evaluator classifies each unresolved thread:
+
+- **VALID** — Real issue, should fix the code
+- **DISMISS** — Bot was wrong or concern does not apply
+- **OPTIONAL** — Nice-to-have suggestion, not a bug
+
+Priority rules: duplicates > real-bug patterns (division-by-zero, security, runtime errors) > bot false-positive patterns > bot code suggestions > human reviewer (default VALID) > bot fallback (OPTIONAL).
 
 ### Auto-Detection
 
-Run from inside **any git checkout** — the CLI and MCP server automatically
-detect:
+Run from inside any git checkout — everything is auto-detected:
 
 1. **Repository** from `git remote get-url origin`
 2. **PR number** from the current branch via GitHub API
-3. **GitHub token** from `GITHUB_TOKEN` env or `~/.netrc`
+3. **GitHub token** from VS Code settings, `GITHUB_TOKEN` env, or `~/.netrc`
 4. **API endpoints** (github.com vs GitHub Enterprise) from the remote URL
 
-No configuration needed for the common case.
+Zero configuration needed for the common case.
 
-### Evaluator (Triage Engine)
+### Production-Ready
 
-Heuristic rules classify each unresolved thread:
-
-- **VALID** — Real issue, should fix the code
-- **DISMISS** — Bot was wrong or concern doesn't apply
-- **OPTIONAL** — Nice-to-have suggestion, not a bug
-
-Rules prioritise: duplicates → real-bug patterns (division-by-zero,
-security) → bot false-positive patterns → bot code suggestions → human
-reviewer (default VALID) → bot fallback (OPTIONAL).
+- Retry with exponential back-off for transient server errors (5xx) and network timeouts
+- Rate-limit detection — automatically pauses when GitHub returns 403
+- Paginated API calls — handles PRs with 100+ files and reviews
+- 71 unit tests with CI running on Python 3.11, 3.12, and 3.13
 
 ## Installation
 
-### Option A: Install the `.vsix` (recommended for teammates)
+### From VS Code Marketplace
+
+Search for **"PR Review MCP"** in the Extensions panel, or run:
 
 ```bash
-code --install-extension pr-review-mcp-0.2.0.vsix
+code --install-extension apattnay.pr-review-mcp
 ```
 
-### Option B: Build from source
+### From .vsix file
 
 ```bash
-git clone <this-repo> ~/pr-review-mcp
-cd ~/pr-review-mcp
-make all           # npm install → compile → package .vsix
-code --install-extension pr-review-mcp-0.2.0.vsix
+code --install-extension pr-review-mcp-1.0.0.vsix
 ```
 
-### Option C: CLI only (no VS Code extension)
+### CLI only (no VS Code)
 
 ```bash
-cd ~/pr-review-mcp/mcp_server
+cd pr-review-mcp/mcp_server
 pip install -e .
 pr-review --help
 ```
 
-### Python dependencies
+### Python Dependencies
 
 The MCP server needs Python 3.11+ with `mcp` and `httpx`:
 
@@ -100,29 +98,27 @@ The MCP server needs Python 3.11+ with `mcp` and `httpx`:
 pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"
 ```
 
-The VS Code extension offers to install them automatically on first
-activation if they're missing.
+The extension offers to install them automatically on first activation.
 
 ## Configuration
 
 ### VS Code Settings
 
-Open VS Code Settings and search for **PR Review MCP**:
-
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `prReviewMcp.githubToken` | `""` | GitHub PAT with `repo` scope (falls back to `$GITHUB_TOKEN` / `~/.netrc`) |
-| `prReviewMcp.githubApiBase` | `https://github.intel.com/api/v3` | REST API base URL |
-| `prReviewMcp.githubGraphqlUrl` | `https://github.intel.com/api/graphql` | GraphQL endpoint |
+| `prReviewMcp.githubToken` | `""` | GitHub PAT with `repo` scope |
+| `prReviewMcp.githubApiBase` | `https://api.github.com` | REST API base URL |
+| `prReviewMcp.githubGraphqlUrl` | `https://api.github.com/graphql` | GraphQL endpoint |
 | `prReviewMcp.pythonPath` | `python3` | Python interpreter path |
 
-For **github.com** (public), set:
+For GitHub Enterprise (e.g. `github.intel.com`), set:
+
 ```
-prReviewMcp.githubApiBase    = https://api.github.com
-prReviewMcp.githubGraphqlUrl = https://api.github.com/graphql
+prReviewMcp.githubApiBase    = https://github.intel.com/api/v3
+prReviewMcp.githubGraphqlUrl = https://github.intel.com/api/graphql
 ```
 
-### Environment variables (all optional)
+### Environment Variables (all optional)
 
 | Variable | Description |
 |----------|-------------|
@@ -134,107 +130,65 @@ prReviewMcp.githubGraphqlUrl = https://api.github.com/graphql
 
 ## Usage
 
-### With Copilot Chat (Agent mode)
+### With Copilot Chat (Agent Mode)
 
-The extension activates on startup. In **Copilot Chat (Agent mode)**:
+The extension activates on startup. In Copilot Chat:
 
-> *"Show me all unresolved review comments on PR #42"*
-> *"Generate a fix plan for PR #42 and help me fix each item"*
-> *"Reply 'Fixed' to comment 12345 and resolve the thread"*
-> *"Evaluate the review comments — which ones should I actually fix?"*
+- "Show me all unresolved review comments on PR #42"
+- "Generate a fix plan for PR #42 and help me fix each item"
+- "Evaluate the review comments — which ones should I actually fix?"
+- "Reply Fixed to comment 12345 and resolve the thread"
+- "Post a summary comment on PR #42 with all the changes I made"
 
 ### With the CLI
 
 ```bash
-# Inside a git checkout with an open PR on the current branch:
 pr-review overview              # auto-detects repo + PR
 pr-review evaluate              # triage unresolved threads
 pr-review unresolved            # see numbered list
-pr-review dismiss 3             # reply & resolve thread #3
-
-# Specify a PR number:
-pr-review overview 2516
-
-# Different repo entirely:
-pr-review overview https://github.com/owner/repo/pull/123
-
-# Bulk-resolve bot comments:
-pr-review batch-resolve --evaluate
+pr-review dismiss 3             # reply and resolve thread #3
+pr-review overview 2516         # specify a PR number
+pr-review batch-resolve --evaluate  # bulk-resolve bot comments
 ```
 
-### Manual `.vscode/mcp.json` (without the extension)
+### Typical Workflow
 
-```json
-{
-    "servers": {
-        "pr-review-mcp": {
-            "type": "stdio",
-            "command": "python3",
-            "args": ["/path/to/pr-review-mcp/mcp_server/server.py"],
-            "env": {
-                "GITHUB_TOKEN": "${env:GITHUB_TOKEN}",
-                "GITHUB_API_BASE": "https://api.github.com",
-                "GITHUB_GRAPHQL_URL": "https://api.github.com/graphql"
-            }
-        }
-    }
-}
-```
-
-## Typical Workflow
-
-1. **Fetch** — `pr-review overview` or *"What are the open review items?"*
-2. **Triage** — `pr-review evaluate` → see which threads need code changes
+1. **Fetch** — `pr-review overview` or "What are the open review items?"
+2. **Triage** — `pr-review evaluate` to see which threads need code changes
 3. **Fix** — Copilot reads the fix plan, opens files, applies changes
 4. **Reply** — `pr-review dismiss N` for invalid threads
 5. **Resolve** — `pr-review batch-resolve --evaluate` for bulk cleanup
-6. **Summarize** — *"Post a comment on PR #123 summarizing all changes"*
+6. **Summarize** — "Post a comment on PR #123 summarizing all changes"
 
 ## Architecture
 
 ```
 pr-review-mcp/
-├── package.json           # VS Code extension manifest (v0.2.0)
-├── tsconfig.json          # TypeScript config
-├── Makefile               # Build commands (install, compile, package)
-├── src/
-│   └── extension.ts       # Extension entry — registers MCP, checks deps
-├── mcp_server/
-│   ├── __init__.py
-│   ├── __main__.py        # python -m mcp_server
-│   ├── pyproject.toml     # Python package (pr-review CLI entry point)
-│   ├── server.py          # FastMCP server — 16 tools (stdio transport)
-│   ├── cli.py             # CLI driver — 9 subcommands + auto-detection
-│   ├── evaluator.py       # Heuristic triage engine (VALID/DISMISS/OPTIONAL)
-│   └── github_client.py   # Async GitHub REST + GraphQL client (paginated)
-├── .vscodeignore
-├── .gitignore
-├── LICENSE
-└── README.md
+  package.json           # VS Code extension manifest
+  src/extension.ts       # Extension — registers MCP server provider
+  mcp_server/
+    server.py            # FastMCP server — 16 tools (stdio transport)
+    cli.py               # CLI — 9 subcommands + auto-detection
+    evaluator.py         # Heuristic triage engine
+    github_client.py     # Async GitHub REST + GraphQL client
+    pyproject.toml       # Python package (pr-review CLI entry point)
+  tests/                 # 71 unit tests (pytest + pytest-asyncio)
+  .github/workflows/     # CI: test + lint + build
+  CHANGELOG.md
 ```
 
-## Development
+## Contributing
 
 ```bash
-npm install          # Install Node dependencies
-npm run compile      # Compile TypeScript
-npm run watch        # Watch mode
-make package         # Build .vsix
-
-# Python
-cd mcp_server && pip install -e .   # Install CLI as 'pr-review'
-```
-
-## Distributing to Teammates
-
-```bash
-# Build
-cd ~/pr-review-mcp
+git clone https://github.com/AshwinPattnayak/pr-review-mcp.git
+cd pr-review-mcp
+npm install && npm run compile
+pip install -e mcp_server/
+pip install pytest pytest-asyncio
+python -m pytest tests/ -v
 make all
-
-# Share the .vsix file
-cp pr-review-mcp-0.2.0.vsix /shared/path/
-
-# Teammates install with:
-code --install-extension /shared/path/pr-review-mcp-0.2.0.vsix
 ```
+
+## License
+
+[MIT](LICENSE)

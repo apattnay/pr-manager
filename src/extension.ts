@@ -1,5 +1,5 @@
 /**
- * PR Review MCP — VS Code Extension (v0.3.0)
+ * PR Review MCP — VS Code Extension (v1.0.0)
  *
  * Registers the bundled Python MCP server via the standard
  * `vscode.lm.registerMcpServerDefinitionProvider` API so that
@@ -119,7 +119,7 @@ function createMcpProvider(
         pythonPath,
         [script],
         buildServerEnv(),
-        "0.3.0"
+        "1.0.0"
       );
       server.cwd = vscode.Uri.file(path.dirname(script));
 
@@ -187,7 +187,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // 4. Validate Python + deps
   checkPythonDeps();
 
-  outputChannel.appendLine("PR Review MCP extension activated (v0.3.0).");
+  outputChannel.appendLine("PR Review MCP extension activated (v1.0.0).");
   outputChannel.appendLine(
     `Server script: ${serverScript(context)}`
   );

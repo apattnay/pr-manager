@@ -1,13 +1,13 @@
 {
   "name": "pr-review-mcp",
   "displayName": "PR Review MCP",
-  "description": "MCP server for GitHub PR review management — fetch, fix, reply to, and resolve review comments from Copilot Chat.",
-  "version": "0.3.0",
+  "description": "MCP server for GitHub PR review management \u2014 fetch, fix, reply to, and resolve review comments from Copilot Chat.",
+  "version": "1.0.0",
   "publisher": "apattnay",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/AshwinPattnayak/pr-review-mcp"
   },
   "engines": {
     "vscode": "^1.99.0"
@@ -86,5 +86,6 @@
   "dependencies": {},
   "overrides": {
     "undici": "5.28.4"
-  }
+  },
+  "icon": "icon.png"
 }
