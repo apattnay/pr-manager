@@ -1,6 +1,6 @@
 # PR Review MCP
 
-[![CI](https://github.com/AshwinPattnayak/pr-review-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AshwinPattnayak/pr-review-mcp/actions)
+[![CI](https://github.com/apattnay/pr-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/apattnay/pr-manager/actions)
 [![VS Code](https://img.shields.io/badge/VS%20Code-1.99%2B-blue?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -180,7 +180,7 @@ pr-review-mcp/
 ## Contributing
 
 ```bash
-git clone https://github.com/AshwinPattnayak/pr-review-mcp.git
+git clone https://github.com/apattnay/pr-manager.git
 cd pr-review-mcp
 npm install && npm run compile
 pip install -e mcp_server/

@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AshwinPattnayak/pr-review-mcp"
+    "url": "https://github.com/apattnay/pr-manager"
   },
   "engines": {
     "vscode": "^1.99.0"

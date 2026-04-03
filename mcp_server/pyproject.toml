@@ -26,10 +26,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/AshwinPattnayak/pr-review-mcp"
-Repository = "https://github.com/AshwinPattnayak/pr-review-mcp"
-Changelog = "https://github.com/AshwinPattnayak/pr-review-mcp/blob/main/CHANGELOG.md"
-Issues = "https://github.com/AshwinPattnayak/pr-review-mcp/issues"
+Homepage = "https://github.com/apattnay/pr-manager"
+Repository = "https://github.com/apattnay/pr-manager"
+Changelog = "https://github.com/apattnay/pr-manager/blob/main/CHANGELOG.md"
+Issues = "https://github.com/apattnay/pr-manager/issues"
 
 [project.scripts]
 pr-review = "cli:main"
