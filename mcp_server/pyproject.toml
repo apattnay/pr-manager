@@ -6,7 +6,7 @@ readme = "../README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
-    {name = "Ashwin Pattnayak"},
+    {name = "Aurodeepta Pattnayak"},
 ]
 keywords = ["github", "pull-request", "review", "mcp", "copilot", "code-review"]
 classifiers = [
