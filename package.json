@@ -1,8 +1,8 @@
 {
   "name": "pr-review-mcp",
   "displayName": "PR Review MCP",
-  "description": "MCP server for GitHub PR review management \u2014 fetch, fix, reply to, and resolve review comments from Copilot Chat.",
-  "version": "0.2.0",
+  "description": "MCP server for GitHub PR review management — fetch, fix, reply to, and resolve review comments from Copilot Chat.",
+  "version": "0.3.0",
   "publisher": "apattnay",
   "license": "MIT",
   "repository": {
@@ -28,25 +28,31 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "pr-review-mcp.server",
+        "label": "PR Review MCP"
+      }
+    ],
     "configuration": {
       "title": "PR Review MCP",
       "properties": {
         "prReviewMcp.githubToken": {
           "type": "string",
           "default": "",
-          "markdownDescription": "GitHub Personal Access Token (PAT) with `repo` scope. If empty, falls back to `GITHUB_TOKEN` env var.",
+          "markdownDescription": "GitHub Personal Access Token (PAT) with `repo` scope. If empty, falls back to `GITHUB_TOKEN` env var or `~/.netrc`.",
           "order": 1
         },
         "prReviewMcp.githubApiBase": {
           "type": "string",
-          "default": "https://github.intel.com/api/v3",
-          "markdownDescription": "Base URL for the GitHub REST API. Change for GitHub.com (`https://api.github.com`) or other GHES instances.",
+          "default": "https://api.github.com",
+          "markdownDescription": "Base URL for the GitHub REST API. For GitHub Enterprise: `https://github.intel.com/api/v3`.",
           "order": 2
         },
         "prReviewMcp.githubGraphqlUrl": {
           "type": "string",
-          "default": "https://github.intel.com/api/graphql",
-          "markdownDescription": "URL for the GitHub GraphQL API.",
+          "default": "https://api.github.com/graphql",
+          "markdownDescription": "URL for the GitHub GraphQL API. For GitHub Enterprise: `https://github.intel.com/api/graphql`.",
           "order": 3
         },
         "prReviewMcp.pythonPath": {
