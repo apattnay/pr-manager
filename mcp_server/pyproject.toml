@@ -1,6 +1,6 @@
 [project]
 name = "pr-review-mcp-server"
-version = "1.1.0"
+version = "1.1.1"
 description = "MCP server + CLI for GitHub PR review comment management"
 readme = "../README.md"
 license = {text = "MIT"}

@@ -1,14 +1,15 @@
 /**
- * PR Review MCP — VS Code Extension (v1.1.0)
+ * PR Review MCP — VS Code Extension (v1.1.1)
  *
  * Registers the bundled Python MCP server via the standard
  * `vscode.lm.registerMcpServerDefinitionProvider` API so that
  * Copilot Chat (Agent mode) can use its PR-review tools.
  *
  * **Auto-setup on activation:**
- * 1. Discovers Python >= 3.11 on the system (python3, python, py, etc.)
- * 2. If `mcp` / `httpx` are missing, offers one-click install
- * 3. Persists the discovered Python path in settings
+ * 1. Discovers a **system** Python >= 3.11 (skips project venvs)
+ * 2. Creates a dedicated venv inside the extension directory
+ * 3. Installs mcp + httpx into that isolated venv
+ * 4. Persists the venv Python path in settings
  *
  * Settings (VS Code Settings UI -> "PR Review MCP"):
  *   prReviewMcp.githubToken      — PAT (falls back to $GITHUB_TOKEN / ~/.netrc)
@@ -116,6 +117,7 @@ interface PythonInfo {
   version: string;
   major: number;
   minor: number;
+  isVenv: boolean;
 }
 
 /**
@@ -132,6 +134,34 @@ function execProbe(cmd: string): Promise<string> {
       }
     });
   });
+}
+
+/** Run a longer command (venv creation, pip install). */
+function execLong(cmd: string, timeoutMs = 120_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    cp.exec(cmd, { timeout: timeoutMs }, (err, stdout, stderr) => {
+      resolve({
+        ok: !err,
+        stdout: (stdout || "").trim(),
+        stderr: (stderr || "").trim(),
+      });
+    });
+  });
+}
+
+/**
+ * Check if a resolved Python path lives inside a virtual environment.
+ */
+function isVenvPath(pythonPath: string): boolean {
+  const normalized = pythonPath.replace(/\\/g, "/").toLowerCase();
+  return (
+    normalized.includes("/.venv/") ||
+    normalized.includes("/venv/") ||
+    normalized.includes("/virtualenvs/") ||
+    normalized.includes("/envs/") ||
+    normalized.includes("\\.venv\\") ||
+    normalized.includes("\\venv\\")
+  );
 }
 
 /**
@@ -163,11 +193,13 @@ async function probePython(candidate: string): Promise<PythonInfo | null> {
   const realPath = await execProbe(
     `${candidate} -c "import sys; print(sys.executable)"`,
   );
+  const resolved = realPath || candidate;
   return {
-    path: realPath || candidate,
+    path: resolved,
     version: `${major}.${minor}`,
     major,
     minor,
+    isVenv: isVenvPath(resolved),
   };
 }
 
@@ -196,6 +228,7 @@ function pythonCandidates(): string[] {
       );
     }
   } else {
+    // Linux / macOS — prefer versioned names, then common absolute paths
     candidates.push(
       "python3.13",
       "python3.12",
@@ -203,18 +236,27 @@ function pythonCandidates(): string[] {
       "python3",
       "python",
     );
-    candidates.push("/usr/local/bin/python3", "/opt/homebrew/bin/python3");
+    candidates.push(
+      "/usr/local/bin/python3.13",
+      "/usr/local/bin/python3.12",
+      "/usr/local/bin/python3.11",
+      "/usr/local/bin/python3",
+      "/usr/bin/python3",
+      "/opt/homebrew/bin/python3",
+    );
   }
   return candidates;
 }
 
 /**
  * Discover the best available Python >= 3.11 on the system.
+ * Prefers system Pythons over venv Pythons.
  * If the user already configured prReviewMcp.pythonPath, try that first.
  */
 async function discoverPython(): Promise<PythonInfo | null> {
   const userConfigured = cfg<string>("pythonPath") || "";
 
+  // 1. If user explicitly configured a path, trust it unconditionally
   if (userConfigured) {
     const info = await probePython(userConfigured);
     if (info) {
@@ -228,23 +270,68 @@ async function discoverPython(): Promise<PythonInfo | null> {
     );
   }
 
+  // 2. Probe all candidates — collect system and venv Pythons separately
   outputChannel.appendLine("Searching for Python >= 3.11 on the system...");
+  const systemHits: PythonInfo[] = [];
+  const venvHits: PythonInfo[] = [];
+
   for (const candidate of pythonCandidates()) {
     const info = await probePython(candidate);
-    if (info) {
+    if (!info) {
+      continue;
+    }
+    if (info.isVenv) {
+      outputChannel.appendLine(
+        `SKIP  ${candidate} -> ${info.path} (${info.version}) [project venv — skipped]`,
+      );
+      venvHits.push(info);
+    } else {
       outputChannel.appendLine(
         `OK  Found: ${candidate} -> ${info.path} (${info.version})`,
       );
-      return info;
+      systemHits.push(info);
     }
+  }
+
+  // Prefer system Python; fall back to venv Python only as last resort
+  if (systemHits.length > 0) {
+    return systemHits[0];
+  }
+  if (venvHits.length > 0) {
+    outputChannel.appendLine(
+      "WARN  No system Python >= 3.11 found; falling back to venv Python.",
+    );
+    return venvHits[0];
   }
 
   outputChannel.appendLine("FAIL  No Python >= 3.11 found on the system.");
   return null;
 }
 
-// ── dependency checking & auto-install ────────────────────────────────────
+// ── dedicated venv & dependency install ───────────────────────────────────
 
+/**
+ * Path to the extension's own isolated venv.
+ */
+function mcpVenvDir(context: vscode.ExtensionContext): string {
+  // Use globalStorageUri so it survives extension updates
+  return path.join(context.globalStorageUri.fsPath, "mcp-venv");
+}
+
+/**
+ * Python executable inside the dedicated venv.
+ */
+function mcpVenvPython(context: vscode.ExtensionContext): string {
+  const isWindows = process.platform === "win32";
+  const venvDir = mcpVenvDir(context);
+  return isWindows
+    ? path.join(venvDir, "Scripts", "python.exe")
+    : path.join(venvDir, "bin", "python");
+}
+
+/**
+ * Check if the given Python has `mcp` and `httpx` importable.
+ */
 async function hasDeps(pythonPath: string): Promise<boolean> {
   const result = await execProbe(
     `${pythonPath} -c "import mcp; import httpx; print('ok')"`,
@@ -252,38 +339,150 @@ async function hasDeps(pythonPath: string): Promise<boolean> {
   return result === "ok";
 }
 
-function installDeps(pythonPath: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const pipCmd = `${pythonPath} -m pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"`;
-    outputChannel.appendLine(`Installing dependencies: ${pipCmd}`);
-    cp.exec(pipCmd, { timeout: 120_000 }, (err, stdout, stderr) => {
-      if (stdout) {
-        outputChannel.appendLine(stdout);
+/**
+ * Check if pip is available for a Python.
+ */
+async function hasPip(pythonPath: string): Promise<boolean> {
+  const result = await execProbe(`${pythonPath} -m pip --version`);
+  return result.startsWith("pip ");
+}
+
+/**
+ * Check if uv is available on the system.
+ */
+async function hasUv(): Promise<boolean> {
+  const result = await execProbe("uv --version");
+  return result.length > 0;
+}
+
+/**
+ * Create a dedicated venv and install deps into it.
+ * Returns the venv Python path on success, or "" on failure.
+ */
+async function createMcpVenv(
+  basePython: string,
+  context: vscode.ExtensionContext,
+): Promise<string> {
+  const venvDir = mcpVenvDir(context);
+  const venvPy = mcpVenvPython(context);
+
+  // Ensure the parent directory exists
+  const parentDir = path.dirname(venvDir);
+  if (!fs.existsSync(parentDir)) {
+    fs.mkdirSync(parentDir, { recursive: true });
+  }
+
+  // Try creating venv with uv first (faster, always includes pip-compatible installer)
+  const uvAvailable = await hasUv();
+  if (uvAvailable) {
+    outputChannel.appendLine(`Creating venv with uv: uv venv --python ${basePython} "${venvDir}"`);
+    const uvResult = await execLong(`uv venv --python ${basePython} "${venvDir}"`);
+    if (uvResult.ok && fs.existsSync(venvPy)) {
+      outputChannel.appendLine("OK  venv created with uv.");
+      // Install deps with uv pip
+      outputChannel.appendLine("Installing dependencies with uv pip...");
+      const installResult = await execLong(
+        `uv pip install --python "${venvPy}" "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
+      );
+      if (installResult.stdout) { outputChannel.appendLine(installResult.stdout); }
+      if (installResult.stderr) { outputChannel.appendLine(installResult.stderr); }
+      if (installResult.ok) {
+        outputChannel.appendLine("OK  Dependencies installed via uv pip.");
+        return venvPy;
       }
-      if (stderr) {
-        outputChannel.appendLine(stderr);
-      }
-      if (err) {
-        outputChannel.appendLine(`FAIL  pip install failed: ${err.message}`);
-        resolve(false);
-      } else {
-        outputChannel.appendLine("OK  Dependencies installed successfully.");
-        resolve(true);
-      }
-    });
-  });
+      outputChannel.appendLine("WARN  uv pip install failed.");
+    } else {
+      if (uvResult.stderr) { outputChannel.appendLine(uvResult.stderr); }
+      outputChannel.appendLine("WARN  uv venv creation failed.");
+    }
+  }
+
+  // Fallback: create venv with stdlib venv module
+  outputChannel.appendLine(`Creating venv: ${basePython} -m venv "${venvDir}"`);
+  const venvResult = await execLong(`${basePython} -m venv "${venvDir}"`);
+  if (!venvResult.ok || !fs.existsSync(venvPy)) {
+    if (venvResult.stderr) { outputChannel.appendLine(venvResult.stderr); }
+    outputChannel.appendLine("FAIL  Could not create venv.");
+    return "";
+  }
+  outputChannel.appendLine("OK  venv created.");
+
+  // Install deps with pip inside the fresh venv
+  const pipAvail = await hasPip(venvPy);
+  if (pipAvail) {
+    outputChannel.appendLine("Installing dependencies with pip...");
+    const pipResult = await execLong(
+      `"${venvPy}" -m pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
+    );
+    if (pipResult.stdout) { outputChannel.appendLine(pipResult.stdout); }
+    if (pipResult.stderr) { outputChannel.appendLine(pipResult.stderr); }
+    if (pipResult.ok) {
+      outputChannel.appendLine("OK  Dependencies installed via pip.");
+      return venvPy;
+    }
+    outputChannel.appendLine("WARN  pip install inside venv failed.");
+  }
+
+  // Last try: uv pip into the stdlib-created venv
+  if (uvAvailable) {
+    outputChannel.appendLine("Trying uv pip install into stdlib venv...");
+    const uvPipResult = await execLong(
+      `uv pip install --python "${venvPy}" "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
+    );
+    if (uvPipResult.stdout) { outputChannel.appendLine(uvPipResult.stdout); }
+    if (uvPipResult.stderr) { outputChannel.appendLine(uvPipResult.stderr); }
+    if (uvPipResult.ok) {
+      outputChannel.appendLine("OK  Dependencies installed via uv pip into stdlib venv.");
+      return venvPy;
+    }
+  }
+
+  outputChannel.appendLine("FAIL  Could not install dependencies into venv.");
+  return "";
 }
 
 /**
  * Full auto-setup flow:
- * 1. Discover Python >= 3.11
- * 2. Check deps, offer to install if missing
- * 3. Persist the working pythonPath in settings
- * 4. Fire the change emitter so VS Code restarts the MCP server
+ * 1. Check if we already have a working venv from a previous run
+ * 2. Discover a system Python >= 3.11
+ * 3. Create a dedicated venv and install deps
+ * 4. Persist the venv Python path in settings
+ * 5. Fire the change emitter so VS Code restarts the MCP server
  */
 async function autoSetup(
+  context: vscode.ExtensionContext,
   didChangeEmitter: vscode.EventEmitter<void>,
 ): Promise<void> {
+  // Fast path: if the configured Python already works, nothing to do
+  const currentSetting = cfg<string>("pythonPath") || "";
+  if (currentSetting) {
+    const depsOk = await hasDeps(currentSetting);
+    if (depsOk) {
+      outputChannel.appendLine(
+        `OK  Configured Python has all deps: ${currentSetting}`,
+      );
+      return;
+    }
+  }
+
+  // Check if our dedicated venv already exists and works
+  const venvPy = mcpVenvPython(context);
+  if (fs.existsSync(venvPy)) {
+    const venvOk = await hasDeps(venvPy);
+    if (venvOk) {
+      outputChannel.appendLine(`OK  Existing MCP venv works: ${venvPy}`);
+      if (currentSetting !== venvPy) {
+        await vscode.workspace
+          .getConfiguration("prReviewMcp")
+          .update("pythonPath", venvPy, vscode.ConfigurationTarget.Global);
+        outputChannel.appendLine(`Updated prReviewMcp.pythonPath -> "${venvPy}"`);
+      }
+      return;
+    }
+    outputChannel.appendLine("WARN  Existing MCP venv missing deps, will recreate.");
+  }
+
+  // Discover a base Python >= 3.11
   const python = await discoverPython();
 
   if (!python) {
@@ -310,31 +509,27 @@ async function autoSetup(
     return;
   }
 
-  // Persist discovered Python path in user settings
-  const currentSetting = cfg<string>("pythonPath") || "";
-  if (currentSetting !== python.path) {
-    await vscode.workspace
-      .getConfiguration("prReviewMcp")
-      .update("pythonPath", python.path, vscode.ConfigurationTarget.Global);
-    outputChannel.appendLine(
-      `Updated prReviewMcp.pythonPath -> "${python.path}"`,
-    );
-  }
-
-  // Check dependencies
+  // If the discovered Python already has deps (e.g. user installed globally), use it directly
   const depsOk = await hasDeps(python.path);
   if (depsOk) {
-    outputChannel.appendLine("OK  All dependencies satisfied.");
+    outputChannel.appendLine(`OK  ${python.path} already has all deps.`);
+    if (currentSetting !== python.path) {
+      await vscode.workspace
+        .getConfiguration("prReviewMcp")
+        .update("pythonPath", python.path, vscode.ConfigurationTarget.Global);
+      outputChannel.appendLine(`Updated prReviewMcp.pythonPath -> "${python.path}"`);
+    }
     return;
   }
 
+  // Deps missing — create a dedicated venv (with user consent)
   outputChannel.appendLine(
-    "Dependencies (mcp, httpx) missing - prompting for install...",
+    `Python ${python.version} at ${python.path} — deps missing, will create isolated venv.`,
   );
 
   const choice = await vscode.window.showWarningMessage(
-    `PR Review MCP: Python ${python.version} found at ${python.path}, ` +
-      "but required packages (mcp, httpx) are not installed.",
+    `PR Review MCP: Python ${python.version} found. ` +
+      "Need to install packages (mcp, httpx) in an isolated environment.",
     "Install Now",
     "Install in Terminal",
     "Skip",
@@ -344,19 +539,23 @@ async function autoSetup(
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: "PR Review MCP: Installing dependencies...",
+        title: "PR Review MCP: Setting up Python environment...",
         cancellable: false,
       },
       async () => {
-        const ok = await installDeps(python.path);
-        if (ok) {
+        const resultPy = await createMcpVenv(python.path, context);
+        if (resultPy) {
+          await vscode.workspace
+            .getConfiguration("prReviewMcp")
+            .update("pythonPath", resultPy, vscode.ConfigurationTarget.Global);
+          outputChannel.appendLine(`Updated prReviewMcp.pythonPath -> "${resultPy}"`);
           vscode.window.showInformationMessage(
-            "PR Review MCP: Dependencies installed! Server starting...",
+            "PR Review MCP: Environment ready! Server starting...",
           );
           didChangeEmitter.fire();
         } else {
           vscode.window.showErrorMessage(
-            "PR Review MCP: pip install failed. Check Output panel (PR Review MCP) for details.",
+            "PR Review MCP: Setup failed. Check Output panel (PR Review MCP) for details.",
           );
         }
       },
@@ -364,9 +563,14 @@ async function autoSetup(
   } else if (choice === "Install in Terminal") {
     const terminal = vscode.window.createTerminal("PR Review MCP Setup");
     terminal.show();
-    terminal.sendText(
-      `${python.path} -m pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"`,
-    );
+    const venvDir = mcpVenvDir(context);
+    const isWindows = process.platform === "win32";
+    const activateCmd = isWindows
+      ? `"${venvDir}\\Scripts\\activate"`
+      : `source "${venvDir}/bin/activate"`;
+    terminal.sendText(`${python.path} -m venv "${venvDir}"`);
+    terminal.sendText(activateCmd);
+    terminal.sendText(`pip install "mcp[cli]>=1.0.0" "httpx>=0.27.0"`);
     vscode.window.showInformationMessage(
       "PR Review MCP: After install completes, run 'PR Review MCP: Restart Server' from the Command Palette.",
     );
@@ -395,7 +599,7 @@ function createMcpProvider(
         pythonPath,
         [script],
         buildServerEnv(),
-        "1.1.0",
+        "1.1.1",
       );
       server.cwd = vscode.Uri.file(path.dirname(script));
 
@@ -459,12 +663,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Auto-discover Python >= 3.11 and install deps
-  autoSetup(didChangeEmitter);
+  // Auto-discover Python >= 3.11, create venv, install deps
+  autoSetup(context, didChangeEmitter);
 
   showSetupHints();
 
-  outputChannel.appendLine("PR Review MCP extension activated (v1.1.0).");
+  outputChannel.appendLine("PR Review MCP extension activated (v1.1.1).");
   outputChannel.appendLine(`Server script: ${serverScript(context)}`);
 }
 

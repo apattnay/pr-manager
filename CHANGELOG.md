@@ -2,6 +2,22 @@
 
 All notable changes to the **PR Review MCP** extension will be documented here.
 
+## [1.1.1] - 2026-04-03
+
+### Fixed
+- **Skip project venvs**: Auto-discovery now detects and skips Python
+  interpreters inside `.venv/`, `venv/`, `virtualenvs/` directories.
+  Previously it would pick up a project venv (e.g. martini's uv-managed
+  `.venv`) that had no pip, causing install to fail.
+- **uv support**: When pip is unavailable, the extension now tries `uv venv`
+  and `uv pip install` as fallbacks (common in uv-managed projects).
+- **Isolated venv**: Dependencies are now installed into a dedicated venv
+  at `globalStorage/mcp-venv/` instead of polluting project environments.
+  This venv persists across extension updates.
+- **Robust install chain**: Creates venv via uv (preferred) or stdlib
+  `python -m venv`, then installs deps via uv pip or pip, with full
+  fallback cascading.
+
 ## [1.1.0] - 2026-04-03
 
 ### Added

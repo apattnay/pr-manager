@@ -2,7 +2,7 @@
   "name": "pr-review-mcp",
   "displayName": "PR Review MCP",
   "description": "MCP server for GitHub PR review management \u2014 fetch, fix, reply to, and resolve review comments from Copilot Chat.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "publisher": "aurodeeptapattnayak",
   "license": "MIT",
   "repository": {
