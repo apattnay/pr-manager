@@ -2,6 +2,28 @@
 
 All notable changes to the **PR Review MCP** extension will be documented here.
 
+## [1.1.0] - 2026-04-03
+
+### Added
+- **Automatic Python discovery**: Extension now auto-detects Python >= 3.11
+  on activation — searches `python3`, `python`, `py -3`, versioned
+  variants (`python3.13`, `python3.12`, `python3.11`), and common
+  install paths on Windows and macOS/Linux.
+- **One-click dependency install**: If Python 3.11+ is found but `mcp` /
+  `httpx` packages are missing, the extension shows a notification with
+  "Install Now" (background pip install) or "Install in Terminal"
+  (interactive) buttons.
+- **Auto-persist Python path**: Once a working Python is discovered, it is
+  saved to `prReviewMcp.pythonPath` so subsequent launches are instant.
+- **Windows support**: Probes Windows Python Launcher (`py -3.x`),
+  Microsoft Store Python, and common `Program Files` install paths.
+- **Clear error messages**: If no Python >= 3.11 exists, shows an error
+  with a "Download Python" button that opens python.org.
+
+### Changed
+- `prReviewMcp.pythonPath` default changed from `python3` to empty
+  string, which triggers auto-discovery.
+
 ## [1.0.0] — 2025-04-03
 
 ### Added

@@ -2,7 +2,7 @@
   "name": "pr-review-mcp",
   "displayName": "PR Review MCP",
   "description": "MCP server for GitHub PR review management \u2014 fetch, fix, reply to, and resolve review comments from Copilot Chat.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "aurodeeptapattnayak",
   "license": "MIT",
   "repository": {
@@ -57,8 +57,8 @@
         },
         "prReviewMcp.pythonPath": {
           "type": "string",
-          "default": "python3",
-          "markdownDescription": "Path to the Python 3.11+ interpreter that has `mcp` and `httpx` installed.",
+          "default": "",
+          "markdownDescription": "Path to a Python 3.11+ interpreter. If empty, the extension auto-discovers the best available Python on your system.",
           "order": 4
         }
       }
